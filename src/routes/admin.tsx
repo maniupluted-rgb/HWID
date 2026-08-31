@@ -1052,7 +1052,7 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
   const [apiUrl, setApiUrl] = useState(DEFAULT_GAME_LIST_API);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  type ParsedRow = { id: string; is_paid?: boolean; name?: string; script_url?: string | null; enabled?: boolean };
+  type ParsedRow = { id: string; is_paid?: boolean; name?: string; script_url?: string | null; enabled?: boolean; added_at?: string };
   type ImportContext = { inferredPaid?: boolean };
 
   async function populateNamesForGames(gameIds: string[]) {
@@ -1094,6 +1094,7 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
             ? row.script_url.trim() || existing.script_url
             : existing.script_url,
         enabled: typeof row.enabled === "boolean" ? row.enabled : existing.enabled,
+        added_at: row.added_at ?? existing.added_at,
       });
     }
     const clean = Array.from(merged.values());
@@ -1111,6 +1112,7 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
         if (typeof r.is_paid === "boolean") row.is_paid = r.is_paid;
         if (r.name) row.name = r.name;
         if (typeof r.script_url === "string") row.script_url = r.script_url;
+        if (typeof r.added_at === "string") row.added_at = r.added_at;
         return row;
       });
     try {
@@ -1283,8 +1285,16 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
       setImportMsg(null);
       return;
     }
+    // API lists oldest first, newest last — map to increasing timestamps so the
+    // table's newest-first sort reflects real API order (distinct added_at per row).
+    const base = Date.now();
     await bulkUpsert(
-      rows.map((row) => ({ id: row.game_id, script_url: row.script_url, enabled: true })),
+      rows.map((row, i) => ({
+        id: row.game_id,
+        script_url: row.script_url,
+        enabled: true,
+        added_at: new Date(base - (rows.length - 1 - i) * 1000).toISOString(),
+      })),
       "API game list",
     );
   }
