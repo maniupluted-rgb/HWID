@@ -7,6 +7,7 @@ export type AllowedGameImportRow = {
   script_url: string | null;
   universe_id?: string | null;
   is_paid?: boolean;
+  added_at?: string;
 };
 
 type AllowedGamePatch = {
@@ -36,6 +37,7 @@ function validateRows(raw: unknown): AllowedGameImportRow[] {
       script_url: row.script_url == null ? null : String(row.script_url).slice(0, 2048),
       ...(row.universe_id ? { universe_id: String(row.universe_id).slice(0, 64) } : {}),
       ...(typeof row.is_paid === "boolean" ? { is_paid: row.is_paid } : {}),
+      ...(row.added_at ? { added_at: String(row.added_at).slice(0, 40) } : {}),
     };
   });
 }
