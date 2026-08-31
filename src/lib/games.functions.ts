@@ -99,3 +99,86 @@ export const deleteAllowedGames = createServerFn({ method: "POST" })
     if (error) throw new Error(`Game delete failed: ${error.message}`);
     return { count: ids.length };
   });
+
+// ---- Import-from-API: pull a game list from a remote endpoint (replaces hardcoded lists) ----
+export const DEFAULT_GAME_LIST_API = "https://combo0-chroncile.vercel.app/api/roblox";
+
+type RemoteGameRow = { game_id: string; script_url: string | null; extra_urls: string[] };
+
+function collectUrls(value: unknown): string[] {
+  if (typeof value === "string") {
+    const v = value.trim();
+    return v ? [v] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap(collectUrls);
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    const raw = o.url ?? o.script_url ?? o.scriptUrl ?? o.raw_url ?? o.rawUrl ?? o.link ?? o.src;
+    return collectUrls(raw);
+  }
+  return [];
+}
+
+function extractRemoteRows(parsed: unknown, out: Map<string, RemoteGameRow>) {
+  if (Array.isArray(parsed)) {
+    for (const entry of parsed) {
+      if (entry && typeof entry === "object") {
+        const o = entry as Record<string, unknown>;
+        const id = String(o.game_id ?? o.gameId ?? o.id ?? o.placeId ?? o.place_id ?? "").trim();
+        if (/^\d+$/.test(id)) {
+          const urls = collectUrls(o);
+          out.set(id, { game_id: id, script_url: urls[0] ?? null, extra_urls: urls.slice(1) });
+          continue;
+        }
+      }
+      extractRemoteRows(entry, out);
+    }
+    return;
+  }
+  if (!parsed || typeof parsed !== "object") return;
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    const id = key.trim();
+    if (/^\d+$/.test(id)) {
+      const urls = collectUrls(value);
+      out.set(id, { game_id: id, script_url: urls[0] ?? null, extra_urls: urls.slice(1) });
+    } else if (value && typeof value === "object") {
+      extractRemoteRows(value, out);
+    }
+  }
+}
+
+export const fetchRemoteGameList = createServerFn({ method: "POST" })
+  .inputValidator((input: { url?: string } | undefined) => {
+    const raw = (input?.url ?? DEFAULT_GAME_LIST_API).toString().trim() || DEFAULT_GAME_LIST_API;
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw new Error("Invalid API URL");
+    }
+    if (parsed.protocol !== "https:") throw new Error("API URL must use https");
+    return { url: parsed.toString() };
+  })
+  .handler(async ({ data }) => {
+    const { requireUnlocked } = await import("./gate.server");
+    await requireUnlocked();
+
+    const res = await fetch(data.url, {
+      headers: { Accept: "application/json", "User-Agent": "HWID-Admin/1.0" },
+    });
+    if (!res.ok) throw new Error(`API responded ${res.status}`);
+
+    const text = await res.text();
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error("API did not return valid JSON");
+    }
+
+    const map = new Map<string, RemoteGameRow>();
+    extractRemoteRows(json, map);
+    const rows = Array.from(map.values());
+    if (rows.length === 0) throw new Error("No game IDs found in API response");
+    return { url: data.url, rows };
+  });

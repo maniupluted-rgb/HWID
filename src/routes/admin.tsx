@@ -5,7 +5,7 @@ import { Activity, Clock, Shield, RefreshCw, Copy, Check, Ban, Settings as Setti
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import { fetchGameName, fetchScriptSource, updateAppSettings, runGrowthAlerts } from "@/lib/roblox.functions";
-import { deleteAllowedGames, listAllowedGames, updateAllowedGame, upsertAllowedGames } from "@/lib/games.functions";
+import { deleteAllowedGames, listAllowedGames, updateAllowedGame, upsertAllowedGames, fetchRemoteGameList, DEFAULT_GAME_LIST_API } from "@/lib/games.functions";
 import { fetchDashboard, clearHwidSession, banHwid as banHwidFn, unbanHwid as unbanHwidFn, saveScriptContent } from "@/lib/admin-data.functions";
 import { combowickAdmin } from "@/lib/combowick.functions";
 import bundledScripts from "@/data/script-bundle.json";
@@ -716,6 +716,7 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
   const lookup = useServerFn(fetchGameName);
   const fetchSource = useServerFn(fetchScriptSource);
   const saveScriptFn = useServerFn(saveScriptContent);
+  const pullRemoteGames = useServerFn(fetchRemoteGameList);
   // Pagination — render in chunks of 10 to keep the table snappy
   const PAGE_SIZE = 10;
   const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
@@ -1048,6 +1049,7 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
 
   const [importBusy, setImportBusy] = useState(false);
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [apiUrl, setApiUrl] = useState(DEFAULT_GAME_LIST_API);
   const fileRef = useRef<HTMLInputElement>(null);
 
   type ParsedRow = { id: string; is_paid?: boolean; name?: string; script_url?: string | null; enabled?: boolean };
@@ -1263,6 +1265,30 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
     );
   }
 
+  async function importFromApi() {
+    const url = apiUrl.trim() || DEFAULT_GAME_LIST_API;
+    setImportBusy(true);
+    setImportMsg(`Fetching game list from ${url}…`);
+    let rows: Array<{ game_id: string; script_url: string | null }> = [];
+    try {
+      const result = await pullRemoteGames({ data: { url } });
+      rows = result.rows;
+    } catch (err) {
+      setImportBusy(false);
+      setImportMsg(`API fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    setImportBusy(false);
+    if (!confirm(`Import ${rows.length} games from the API?`)) {
+      setImportMsg(null);
+      return;
+    }
+    await bulkUpsert(
+      rows.map((row) => ({ id: row.game_id, script_url: row.script_url, enabled: true })),
+      "API game list",
+    );
+  }
+
   async function saveScript() {
     setScriptBusy(true);
     try {
@@ -1447,6 +1473,13 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
               <input ref={fileRef} type="file" accept=".json,.txt,.csv" onChange={onFile} className="hidden" />
             </label>
             <button
+              onClick={importFromApi}
+              disabled={importBusy}
+              className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
+            >
+              <Globe className="h-4 w-4" /> {importBusy ? "Importing…" : "Import from API"}
+            </button>
+            <button
               onClick={fetchAllMissing}
               disabled={fetchAllBusy}
               className="inline-flex items-center gap-2 rounded-md border border-border bg-background/60 px-3 py-2 text-sm hover:border-primary/50 disabled:opacity-50"
@@ -1454,6 +1487,10 @@ function GamesTab({ games, reload, cfg }: { games: Game[]; reload: () => void; c
               <Sparkles className="h-4 w-4" /> {fetchAllBusy ? "Fetching…" : "Fetch all missing names"}
             </button>
             {(importMsg || fetchAllMsg) && <span className="text-xs text-muted-foreground">{importMsg || fetchAllMsg}</span>}
+          </div>
+          <div className="mt-3 space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Game list API URL</Label>
+            <Input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder={DEFAULT_GAME_LIST_API} className="font-mono text-xs" />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             Bulk add Roblox place IDs. Accepts flat arrays, nested bundles, keyed objects, and original scripts JSON using fields like <code>gameId</code>, <code>url</code>, <code>scriptUrl</code>, <code>raw_url</code>, <code>type</code>, and <code>isPaid</code>. The built-in bundle now imports the real URLs recovered from your uploaded site export, and paid entries auto-route to the built-in paid loader.
