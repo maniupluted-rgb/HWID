@@ -140,6 +140,7 @@ function AdminDashboard() {
   const [activeCount, setActiveCount] = useState(0);
   const [cooldownCount, setCooldownCount] = useState(0);
   const [searchHwid, setSearchHwid] = useState("");
+  const [debouncedSearchHwid, setDebouncedSearchHwid] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "cooldown">("all");
   const [gameFilter, setGameFilter] = useState<string>("all"); // "all" | game_id
   const listGames = useServerFn(listAllowedGames);
@@ -150,7 +151,7 @@ function AdminDashboard() {
   const [sortBy, setSortBy] = useState<"newest" | "oldest" | "remaining">("newest");
 
   async function load() {
-    const term = searchHwid.trim();
+    const term = debouncedSearchHwid.trim();
     const [dash, gamesResult] = await Promise.all([
       loadDashboard({ data: { term, statusFilter, sessionLimit } }),
       listGames({ data: undefined }),
@@ -184,14 +185,44 @@ function AdminDashboard() {
     load();
   }
 
+  // Debounce the HWID search box — without this, every keystroke fired the full
+  // (multi-query) dashboard load, which was a major driver of Fluid Active CPU.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearchHwid(searchHwid), 350);
+    return () => clearTimeout(t);
+  }, [searchHwid]);
+
   useEffect(() => {
     load();
     const t = setInterval(() => setNow(Date.now()), 1000);
     // The password gate is only a cookie (not a Supabase login), so realtime over
-    // the anon key can't read these tables. Poll the gated server fn instead.
-    const poll = setInterval(() => { load(); }, 5000);
-    return () => { clearInterval(t); clearInterval(poll); };
-  }, [sessionLimit, searchHwid, statusFilter]);
+    // the anon key can't read these tables. Poll the gated server fn instead —
+    // but only while the tab is actually visible, so a forgotten/backgrounded
+    // admin tab doesn't keep burning Fluid compute CPU indefinitely.
+    let poll: ReturnType<typeof setInterval> | null = null;
+    function startPoll() {
+      if (poll) return;
+      poll = setInterval(() => { load(); }, 10000);
+    }
+    function stopPoll() {
+      if (poll) { clearInterval(poll); poll = null; }
+    }
+    function handleVisibility() {
+      if (document.hidden) {
+        stopPoll();
+      } else {
+        load(); // catch up immediately on refocus
+        startPoll();
+      }
+    }
+    if (!document.hidden) startPoll();
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      clearInterval(t);
+      stopPoll();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [sessionLimit, debouncedSearchHwid, statusFilter]);
 
 
   const { signOut } = useAuth();
