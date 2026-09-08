@@ -87,7 +87,7 @@ export const Route = createFileRoute("/api/public/script")({
 
           const { data: session, error } = await supabaseAdmin
             .from("hwid_sessions")
-            .select("hwid, status, session_token, session_token_created_at")
+            .select("hwid, status, session_token, session_token_created_at, last_game_id")
             .eq("session_token", token)
             .maybeSingle();
 
@@ -99,6 +99,47 @@ export const Route = createFileRoute("/api/public/script")({
             new Date(session.session_token_created_at).getTime() + 30 * 60 * 1000 < Date.now()
           ) {
             return new Response("invalid token", { status: 401, headers });
+          }
+
+          // Per-game free-session scripts (name / timer / url or inline vault body), pushed
+          // from the key system. A valid live session + this game unlocks the picked script;
+          // the protected body is served inline here (never as a public URL).
+          const reqUrl = new URL(request.url);
+          const pickedId = (reqUrl.searchParams.get("s") || "").trim();
+          if (session.last_game_id) {
+            const { data: gameRow } = await supabaseAdmin
+              .from("allowed_games")
+              .select("fs_scripts, enabled, is_paid")
+              .eq("game_id", String(session.last_game_id))
+              .maybeSingle();
+            const list = Array.isArray((gameRow as any)?.fs_scripts) ? ((gameRow as any).fs_scripts as any[]) : [];
+            if (gameRow && (gameRow as any).enabled !== false && list.length > 0) {
+              // Pick by id when provided, else the first enabled free-session script.
+              const chosen = (pickedId && list.find((s) => s && s.id === pickedId)) || list[0];
+              if (chosen) {
+                // Inline vault body — already stored obfuscated; serve verbatim.
+                if (chosen.body && typeof chosen.body === "string") {
+                  return new Response(chosen.body, {
+                    status: 200,
+                    headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
+                  });
+                }
+                // URL-backed free script — fetch upstream and obfuscate.
+                if (chosen.url && typeof chosen.url === "string") {
+                  const up = await fetchUpstreamCached(chosen.url);
+                  if (!up.ok) {
+                    return new Response(`script source failed (${up.status})`, {
+                      status: 502,
+                      headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
+                    });
+                  }
+                  return new Response(obfuscateScript(up.body), {
+                    status: 200,
+                    headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
+                  });
+                }
+              }
+            }
           }
 
           const tokenData = { script_url: null as string | null };
