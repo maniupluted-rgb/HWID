@@ -124,9 +124,9 @@ export const Route = createFileRoute("/api/public/script")({
                     headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
                   });
                 }
-                // URL-backed free script — fetch upstream and obfuscate. The obfuscator
-                // is now UTF-8-safe (see lua-obfuscator.ts), so scripts with emoji/unicode
-                // no longer break the decoder in-executor.
+                // URL-backed free script — fetch upstream and serve VERBATIM by default.
+                // Obfuscation is OPT-IN per script (chosen.obfuscate === true); it is never
+                // applied automatically. The obfuscator is now UTF-8-safe if you do enable it.
                 if (chosen.url && typeof chosen.url === "string") {
                   const up = await fetchUpstreamCached(chosen.url);
                   if (!up.ok) {
@@ -135,7 +135,8 @@ export const Route = createFileRoute("/api/public/script")({
                       headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
                     });
                   }
-                  return new Response(obfuscateScript(up.body), {
+                  const out = (chosen as any).obfuscate === true ? obfuscateScript(up.body) : up.body;
+                  return new Response(out, {
                     status: 200,
                     headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
                   });
