@@ -26,9 +26,15 @@ export function isBrowserRequest(req: Request): boolean {
 }
 
 function xorEncrypt(input: string, key: number): number[] {
+  // Encode to UTF-8 BYTES first (each 0-255). Using charCodeAt() here was the bug:
+  // for any non-ASCII char (emoji, •, —, ✅ …) it returns a UTF-16 code unit > 255,
+  // and Lua's string.char() errors on values > 255 — so the whole decoder threw and
+  // the script never ran. UTF-8 bytes keep every value in range, and concatenating
+  // them in Lua rebuilds the exact source (Lua strings are byte strings).
+  const bytes = new TextEncoder().encode(input);
   const result: number[] = [];
-  for (let i = 0; i < input.length; i++) {
-    result.push(input.charCodeAt(i) ^ ((key + i * 37) & 0xFF));
+  for (let i = 0; i < bytes.length; i++) {
+    result.push(bytes[i] ^ ((key + i * 37) & 0xFF));
   }
   return result;
 }
