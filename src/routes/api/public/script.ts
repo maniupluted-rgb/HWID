@@ -124,7 +124,9 @@ export const Route = createFileRoute("/api/public/script")({
                     headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
                   });
                 }
-                // URL-backed free script — fetch upstream and obfuscate.
+                // URL-backed free script — fetch upstream and serve VERBATIM. The source
+                // is a public GitHub raw anyway, so re-obfuscating adds no real protection
+                // and the VM re-wrap broke some scripts at runtime in-executor. Serve as-is.
                 if (chosen.url && typeof chosen.url === "string") {
                   const up = await fetchUpstreamCached(chosen.url);
                   if (!up.ok) {
@@ -133,7 +135,7 @@ export const Route = createFileRoute("/api/public/script")({
                       headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
                     });
                   }
-                  return new Response(obfuscateScript(up.body), {
+                  return new Response(up.body, {
                     status: 200,
                     headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
                   });
