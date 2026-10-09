@@ -87,7 +87,7 @@ export const Route = createFileRoute("/api/public/script")({
 
           const { data: session, error } = await supabaseAdmin
             .from("hwid_sessions")
-            .select("hwid, status, session_token, session_token_created_at, last_game_id")
+            .select("hwid, status, session_token, session_token_created_at, last_game_id, game_key")
             .eq("session_token", token)
             .maybeSingle();
 
@@ -106,12 +106,29 @@ export const Route = createFileRoute("/api/public/script")({
           // the protected body is served inline here (never as a public URL).
           const reqUrl = new URL(request.url);
           const pickedId = (reqUrl.searchParams.get("s") || "").trim();
-          if (session.last_game_id) {
-            const { data: gameRow } = await supabaseAdmin
-              .from("allowed_games")
-              .select("fs_scripts, enabled, is_paid")
-              .eq("game_id", String(session.last_game_id))
-              .maybeSingle();
+          if (session.last_game_id || (session as any).game_key) {
+            // Match the exact place first, then fall back to the session's universe (game_key):
+            // a player in a sub-place (match/teleport place) has last_game_id = that sub-place,
+            // while the game is registered under its main place id.
+            const placeId = session.last_game_id ? String(session.last_game_id) : "";
+            const universeId = (session as any).game_key ? String((session as any).game_key) : "";
+            let gameRow: any = null;
+            if (placeId) {
+              const { data } = await supabaseAdmin
+                .from("allowed_games")
+                .select("fs_scripts, enabled, is_paid")
+                .eq("game_id", placeId)
+                .limit(1);
+              gameRow = Array.isArray(data) && data.length ? data[0] : null;
+            }
+            if (!gameRow && universeId) {
+              const { data } = await supabaseAdmin
+                .from("allowed_games")
+                .select("fs_scripts, enabled, is_paid")
+                .eq("universe_id", universeId)
+                .limit(1);
+              gameRow = Array.isArray(data) && data.length ? data[0] : null;
+            }
             const list = Array.isArray((gameRow as any)?.fs_scripts) ? ((gameRow as any).fs_scripts as any[]) : [];
             if (gameRow && (gameRow as any).enabled !== false && list.length > 0) {
               // Pick by id when provided, else the first enabled free-session script.
